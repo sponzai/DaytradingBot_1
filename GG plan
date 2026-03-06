@@ -75,3 +75,48 @@ Hvilken af disse kategorier lyder mest spændende for dig at udforske som det n�
 
 
 
+
+
+
+
+
+
+
+Det er den helt rigtige indstilling – det er en "rabbit hole", hvor hvert lag gør din bot mere robust. For at du ikke drukner i kompleksitet, er her den optimale køreplan, så du bygger dem oven på hinanden i den rækkefølge, der giver mest mening teknisk:
+Fase 1: Fundamentet (Data & Features)
+Før du skifter model, skal din data være i topklasse.
+
+* Feature Engineering: Implementér biblioteket pandas-ta (Technical Analysis). Det giver dig lynhurtig adgang til RSI, MACD og Bollinger Bands.
+* Markedskontekst: Begynd at trække data for SPY (S&P 500) samtidig med din valgte aktie. Din model skal lære, at hvis markedet crasher, så skal den ikke købe, uanset hvor godt aktien ser ud.
+* Time of Day: Tilføj en kolonne for "minutter siden åbning". Strategier, der virker i den volatile åbning (15:30-16:30), fejler ofte i den stille frokostpause.
+
+Fase 2: Beslutningslogik (Sentiment & NLP)
+Når tallene spiller, tilføjer du det "bløde" lag.
+
+* Nyheds-feed: Brug en API som Finnhub eller NewsAPI til at trække overskrifter for din aktie.
+* Sentiment Score: Kør overskrifterne gennem en lille model (f.eks. VADER eller en præ-trænet HuggingFace transformer) for at give din bot en score fra -1 (meget negativt) til +1 (meget positivt).
+
+Fase 3: Den Avancerede Hjerne (Deep Learning)
+Nu skifter du fra Random Forest (der ser på øjebliksbilleder) til modeller med hukommelse.
+
+* LSTM / GRU: Begynd at bruge sekvenser af data (f.eks. de sidste 60 minutter) som input i stedet for kun den nuværende bar.
+* Ensemble: Lav to modeller – én der kigger på pris-momentum og én der kigger på sentiment – og lad dem "blive enige", før der handles.
+
+Fase 4: Optimering & Overlevelse (Execution)
+Her går du fra at have en model til at have en trading-forretning.
+
+* Position Sizing: Implementér logik, der skruer ned for risikoen, hvis din bot har tabt 3 gange i træk.
+* Limit Orders: Skift fra simple markedsordrer til limit-ordrer i din simulation for at se, hvor meget du reelt mister på "slippage".
+
+Fase 5: Reinforcement Learning (RL)
+Dette er slutstadiet.
+
+* Brug et framework som Stable Baselines3. Her lærer din bot ikke bare at "gætte prisen", men at navigere i et miljø, hvor den skal balancere risiko, kurtage og profit over tid.
+
+Mit forslag til dit næste træk:
+Start med at få styr på Fase 1 ved at integrere tekniske indikatorer og markeds-indeks (SPY) i din nuværende Python-backtester.
+Skal jeg vise dig, hvordan man hurtigt tilføjer RSI og SPY-korrelation til din data i Python?
+
+
+
+
