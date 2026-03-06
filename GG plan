@@ -1,0 +1,27 @@
+Det er den absolut klogeste tilgang. Mange fejler, fordi de bygger en kompleks "sort boks" fra start, som de ikke kan fejlfinde i.
+Her er en køreplan til at bygge din version 1.0 (V1) simpelt, så du har et solidt fundament at udbygge:
+1. V1: Den "Dumme" Model (Baseline)
+Start med en simpel Supervised Learning klassificering.
+
+* Input (Features): Brug de sidste 5–10 minut-barer (Prisændring, Volumen, RSI).
+* Target (Label): Vil prisen være højere om 5 minutter? (Ja/Nej).
+* Algoritme: Brug en Random Forest eller XGBoost. De er robuste over for støj og kræver ikke så meget data-skalering som Deep Learning (Neural Networks).
+
+2. Tilføj "Markedets Regler" (Heuristikker)
+Lad ikke ML-modellen styre alt i starten. Byg et "sikkerhedsnet" af kode udenom:
+
+* Stop-Loss: En hård regel om at sælge, hvis prisen falder X%.
+* Take-Profit: Luk handlen automatisk ved en fast gevinst.
+* Time-Exit: Tving botten til at lukke alle positioner 15 minutter før børsen lukker (så du ikke holder aktier natten over).
+
+3. Vejen mod kompleksitet
+Når din V1 er stabil (selvom den måske ikke er profitabel endnu), kan du gradvist tilføje:
+
+* Feature Engineering: Tilføj data fra relaterede aktier (f.eks. hvis Apple falder, følger tech-sektoren ofte med).
+* Sentiment Analyse: Inddrag nyhedsoverskrifter eller Twitter-data.
+* Reinforcement Learning (RL): Her lærer botten selv gennem "trial and error" at maksimere profit, men det kræver enormt meget data og regnekraft.
+
+Dit første skridt i Python
+Start med at hente data for én stabil aktie (f.eks. AAPL eller TSLA) via Polygon eller yfinance og prøv at se, om en Random Forest kan gætte retningen på den næste bar bedre end 50/50.
+Vil du have et simpelt kode-eksempel på, hvordan man forbereder minut-data til en ML-model i Pandas?
+
