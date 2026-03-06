@@ -25,3 +25,53 @@ Dit første skridt i Python
 Start med at hente data for én stabil aktie (f.eks. AAPL eller TSLA) via Polygon eller yfinance og prøv at se, om en Random Forest kan gætte retningen på den næste bar bedre end 50/50.
 Vil du have et simpelt kode-eksempel på, hvordan man forbereder minut-data til en ML-model i Pandas?
 
+
+
+
+
+
+Her er en tjekliste over lag, du kan lægge oven på din V1, rangeret fra de mest logiske tekniske forbedringer til de avancerede ML-metoder:
+1. Avanceret Feature Engineering (Data-forfining)
+I stedet for kun at bruge pris (OHLC), kan du give din model "bedre briller" at se markedet med:
+
+* Tekniske Indikatorer: Tilføj RSI, MACD, Bollinger Bands og Moving Averages (EMA/SMA).
+* Volumen-analyse: Brug VWAP (Volume Weighted Average Price) – det er det mest brugte værktøj blandt institutionelle daytradere.
+* Lagged Features: Giv modellen data fra de foregående 5, 10 og 30 minutter som separate inputs, så den kan se "momentum".
+* Tid som feature: Tilføj "minutter siden åbning". Markedet opfører sig meget anderledes kl. 15:30 (åbning) end kl. 19:00 (midtfart).
+
+2. Multi-Asset Korrelation (Markedskontekst)
+En aktie bevæger sig sjældent alene. Din model bliver klogere, hvis den ved, hvad naboen gør:
+
+* Indeks-tracking: Giv din model data for SPY (S&P 500) eller QQQ (Nasdaq). Hvis indekset dykker, trækker det ofte din aktie med ned.
+* Sektor-analyse: Hvis du træner på NVIDIA, så giv den data fra AMD og Intel som input.
+* VIX (Frygt-indekset): Tilføj markedets volatilitet. Modeller skal ofte handle mere forsigtigt, når VIX er høj.
+
+3. Alternative Datakilder (Sentiment & Nyheder)
+Dette er "det næste niveau", hvor du ser ting, som de rå grafer ikke viser:
+
+* Sentiment Analysis: Brug en NLP-model (f.eks. BERT eller en simpel GPT-prompt) til at analysere overskrifter fra nyhedsbureauer eller finansielle subreddits i realtid.
+* Economic Calendar: Lær modellen at holde pause lige før vigtige tal (f.eks. inflationstal eller rentemøder fra FED).
+
+4. Avancerede ML Arkitekturer
+Når Random Forest ikke længere er nok, kan du skifte gear:
+
+* LSTM / GRU (Recurrent Neural Networks): Disse er designet specifikt til tidsserier, da de har en "hukommelse" for, hvad der skete i de forrige bars.
+* Transformers: Samme teknologi som ChatGPT, men brugt på tal-sekvenser for at finde komplekse afhængigheder i markedsdata.
+* Ensemble Learning: Kombiner flere modeller (f.eks. én der kigger på momentum og én der kigger på sentiment) og lad dem "stemme" om ordren.
+
+5. Fra Prediction til Agent (Reinforcement Learning)
+Dette er den "hellige gral" inden for trading bots:
+
+* I stedet for blot at gætte "op eller ned", lader du en RL-agent (f.eks. PPO eller DQN) træne i et simuleret miljø.
+* Agenten får "straf" for at tabe penge og "belønning" for profit. Den lærer selv komplekse strategier som at "scale in/out" af positioner.
+
+6. Execution Optimering (Order Management)
+Selv den bedste model taber penge, hvis den køber for dyrt:
+
+* Limit Order Logic: Byg logik der forsøger at blive fyldt på "bid" i stedet for bare at købe til "market price".
+* Position Sizing: Brug Kelly Criterion eller lignende matematiske modeller til at beregne, præcis hvor stor en procentdel af din konto du skal satse per handel baseret på modellens "confidence score".
+
+Hvilken af disse kategorier lyder mest spændende for dig at udforske som det næste skridt efter din V1?
+
+
+
