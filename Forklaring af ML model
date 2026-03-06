@@ -1,0 +1,366 @@
+Klart, Jonas — lad os gå **linje for linje** gennem det seneste script (`train_next1m_direction.py`) og forklare:
+
+*   **Hvad** hver del gør
+*   **Hvorfor** den gør det (designvalg og fordele)
+*   **Hvordan** den gør det (detaljer om dataflow og matematik)
+*   **Hvilke alternativer** der findes for hver funktion/del
+
+> **Formål:** Brug de **seneste 3–6 1‑minutters lys** (pris + volumen) til at forudsige, om **næste** 1‑minuts lys bliver **op eller ned**.
+
+***
+
+## 1) CLI‑argumenter og opsætning
+
+```python
+ap = argparse.ArgumentParser(...)
+ap.add_argument("--data", default="candles_1min_last7days.csv")
+ap.add_argument("--lags", type=int, default=5)          # hvor mange tidligere lys bruges (3–6 anbefalet)
+ap.add_argument("--rth",  type=str, default="true")     # Regular Trading Hours filter
+ap.add_argument("--test_days", type=float, default=1.0) # hold-out vindue i dage (tid-baset split)
+ap.add_argument("--outdir", default="ml_output_simple") # hvor artefakter gemmes
+```
+
+**Hvorfor:**
+
+*   Gør scriptet **parametrisk** og let at eksperimentere med (fx `--lags 3` vs `--lags 6`).
+*   **Time‑based holdout** (sidste N dage) matcher realiteten: vi træner på fortiden og evaluerer på **fremtidige** observationer.
+
+**Alternativer:**
+
+*   **Konfigurationsfil** (YAML/JSON) fremfor CLI‑flags.
+*   **Miljøvariabler** i produktionsmiljø.
+*   Flere flags: `--threshold`, `--shorts`, `--spread_bps` (transaktionsomkostninger), `--walk_forward`, etc.
+
+***
+
+## 2) Indlæsning og tidsindeks (ingen lækage via tidskolonner)
+
+```python
+df = pd.read_csv(args.data)
+df = ensure_datetime_index(df)
+```
+
+### `ensure_datetime_index(df)`
+
+*   Finder en **tidsstempelkolonne** (`Datetime`, `Date`, `index` m.fl.), konverterer til `DatetimeIndex`, **sorterer**, og **lokaliserer til UTC**.
+
+**Hvorfor:**
+
+*   Ensartet, gyldig tidsakse er **kritisk** i tidsserie‑ML.
+*   UTC undgår tidszone‑fejl (US sommer/vintertid, lokaltid vs. børstid).
+*   Sortering sikrer, at **lag‑features** og **targets** beregnes korrekt i tidsrækkefølge.
+
+**Alternativer:**
+
+*   Tving input til at have **fast kolonnenavn** (`timestamp`) og undgå heuristik.
+*   **Parquet** i stedet for CSV (hurtigere, bevarer dtype og index).
+*   Brug en **sklearn Pipeline** til indlæsning + transformationer systematisk.
+
+***
+
+## 3) RTH‑filter (Regular Trading Hours)
+
+```python
+if args.rth.lower() in ("true", "1", "yes", "y"):
+    df = df.groupby("symbol", group_keys=False).apply(filter_rth)
+```
+
+### `filter_rth(g)`
+
+*   Konverterer index til **America/New\_York** og filtrerer **hverdage 09:30–16:00**.
+
+**Hvorfor:**
+
+*   1m‑data har meget **støj** i pre‑/post‑market; spreads og microstructure‑effekter kan dominere.
+*   RTH har (typisk) **bedre likviditet**, mere stabilt regime — **lettere at generalisere**.
+
+**Alternativer:**
+
+*   Brug **hele døgnet** (`--rth false`) for nogle tickere (fx krypto/24/7).
+*   Brug **udvekslingskalendere** (fx `pandas_market_calendars`) for præcis helligdags‑ og åbningstidshåndtering.
+*   Filtrer efter **egen likviditetslogik** (fx volume quantile per symbol).
+
+***
+
+## 4) Feature‑engineering: kun de seneste L lys + volumen
+
+```python
+df_feat = df.groupby("symbol", group_keys=True).apply(
+    lambda g: build_lag_features_per_symbol(g.copy(), lags=int(args.lags))
+)
+```
+
+### `build_lag_features_per_symbol(g, lags)`
+
+Bygger **strengt fortidsafhængige** features (ingen lækage):
+
+*   **Basispens:**
+    ```python
+    close = g["Close"].astype(float)
+    high  = g["High"].astype(float)
+    low   = g["Low"].astype(float)
+    vol   = g["Volume"].astype(float)
+    ```
+
+*   **Retur & intradag‑range:**
+    ```python
+    ret1     = close.pct_change()
+    hl_range = (high - low) / close
+    ```
+    *ret1* = procentændring pr. minut; *hl\_range* indfanger **volatilitet i lyset**.
+
+*   **Volumen‑signal:**
+    ```python
+    vol_mean = vol.rolling(60, min_periods=10).mean()
+    vol_std  = vol.rolling(60, min_periods=10).std()
+    vol_z    = (vol - vol_mean) / vol_std
+    ```
+    Z‑score normaliserer volumen relativt til **seneste \~60 minutter**.
+
+*   **Lags (1..L):**
+    ```python
+    for k in range(1, lags + 1):
+        g[f"ret_lag{k}"]   = ret1.shift(k)
+        g[f"range_lag{k}"] = hl_range.shift(k)
+        g[f"vol_lag{k}"]   = vol.shift(k)
+        g[f"volz_lag{k}"]  = vol_z.shift(k)
+    ```
+    Alt er **shiftet ≥ 1**, dvs. kun **kendt fortid**.
+
+*   **Label/target (næste minut):**
+    ```python
+    g["fut_ret"] = close.shift(-1) / close - 1.0
+    g["y"] = (g["fut_ret"] > 0).astype(int)
+    ```
+    *y=1* hvis **næste luk** > **nuværende luk**; ellers *0*.
+
+*   **Drop rækker uden fuld dækning:**  
+    Første *L* rækker (pga. lags) og sidste række (pga. `shift(-1)`) mangler data og droppes.
+
+**Hvorfor:**
+
+*   Du ønskede specifikt **“de sidste 3–6 lys + volumen”**; disse features er præcis det.
+*   **Lagging** sikrer **ingen look‑ahead bias**.
+*   Volumen‑z‑score fremhæver **usædvanlige volumenniveauer**, der ofte bærer informationsværdi.
+
+**Alternativer (fortsat minimalistisk, men ofte stærke):**
+
+*   **Body/wicks:**
+    *   `body = (Close-Open)/Open`,
+    *   `upper_wick = (High - max(Open, Close))/Close`,
+    *   `lower_wick = (min(Open, Close) - Low)/Close`
+*   **Kombinationer/interaktioner:** `ret_lag1 * volz_lag1` osv.
+*   **Glidende middel / momentum:** `Close / SMA(5) - 1`, `EMA‑hældning`.
+*   **VWAP‑afstand (intraday):** kræver tick eller volumenvægtet pris i vindue.
+*   **Sekvensmodeller** i stedet (RNN/LSTM/1D‑CNN/TCN) — så fødes de sidste L lys som en **sekvens** i stedet for fladlaggede features.
+
+***
+
+## 5) Tidsbaseret trænings‑/test‑split
+
+```python
+cutoff = df_feat.index.max() - pd.Timedelta(days=float(args.test_days))
+train = df_feat.loc[df_feat.index <= cutoff]
+test  = df_feat.loc[df_feat.index >  cutoff]
+```
+
+**Hvorfor:**
+
+*   **Fremtiden** skal **ikke** bruges til at træne modellen, hvis vi vil have en realistisk generalisering.
+*   Et simpelt, robust hold‑out: “træn på de første \~6 dage, test på sidste \~1 dag”.
+
+**Alternativer:**
+
+*   **Walk‑forward (rolling) CV**: fx (train: dag 1–5 → test: dag 6), så (2–6 → 7), osv.; giver **fordeling** af performance over forskellige perioder.
+*   **Purged + embargoed splits**: Hvis features overlapper på tværs af split, “rens” vinduesoverlap og indlæg **embargo** efter træningsperioden for at undgå indirekte lækage.
+*   **Per‑symbol splits**: hold out per symbol for at få stabil symbol‑dækkende evaluering.
+
+***
+
+## 6) Feature‑matricen
+
+```python
+feature_cols = [
+  "ret_lag1..L", "range_lag1..L",
+  "vol_lag1..L", "volz_lag1..L"
+]
+```
+
+**Hvorfor:**
+
+*   **Enkelt, forklarligt** og matcher din specifikation.
+*   Kombinerer **retning, volatilitet og aktivitet** (volume) i nær fortid.
+
+**Alternativer:**
+
+*   **Skalering** (StandardScaler) er *ikke* nødvendig for træer, men hjælper ved **logistisk regression/NN**.
+*   **Feature‑udvælgelse** (mutual information, permutation importance) eller **PCA** (mindre nyttigt for træer).
+
+***
+
+## 7) Modelvalg: `HistGradientBoostingClassifier` (sklearn)
+
+```python
+model = HistGradientBoostingClassifier(
+    learning_rate=0.1,
+    max_leaf_nodes=31,
+    min_samples_leaf=100,
+    l2_regularization=1e-3,
+    random_state=42
+)
+model.fit(X_train, y_train)
+```
+
+**Hvorfor HGB?**
+
+*   **Træ‑boosting** fanger **ikke‑lineære** mønstre og interaktioner uden feature‑skalering.
+*   **Histogram‑variant** er **hurtig og skalerer** til store datasæt.
+*   Tåler **NaN** i numeriske features (sklearn HGB håndterer manglende værdier).
+*   Parametre sat **konservativt** ift. 1m‑støj:
+    *   `min_samples_leaf=100` & `l2_regularization` → dæmper overfitting
+    *   `max_leaf_nodes=31` → begrænser træernes kompleksitet
+
+**Alternativer:**
+
+*   **Logistic Regression** (simpel baseline; brug StandardScaler).
+*   **Random Forest** (robust, men ofte svagere end boosting).
+*   **XGBoost/LightGBM/CatBoost** (ofte stærkere, flere knobs, men mere kompleks).
+*   **SVM** (sjældent god til meget store datasæt; kræver skalering).
+*   **Neural netværk**:
+    *   **MLP (feed‑forward)** på laggede features.
+    *   **LSTM/GRU/1D‑CNN/TCN** på *sekvenser* (kræver anden featureform).
+*   **Kalibrering** (Platt/Isotonic) → bedre sandsynligheder til thresholding/position sizing.
+
+***
+
+## 8) Prediktion & tærskel
+
+```python
+proba  = model.predict_proba(X_test)[:, 1]
+y_pred = (proba >= 0.5).astype(int)
+```
+
+**Hvorfor 0.5?**
+
+*   Naturlig default for **binær** klassifikation.
+
+**Alternativer:**
+
+*   **Hæv tærsklen** (fx 0.55/0.6) for færre, men **mere sikre** signaler (ofte forbedrer PnL pr. trade).
+*   **Omkostnings‑baseret** tærskel: kræv at **forventet afkast > spread + fee**.
+*   **To‑tærskel strategi** (long hvis ≥ T\_high, short hvis ≤ T\_low).
+
+***
+
+## 9) Evaluering: klassificering + “trading proxy”
+
+**Klassifikationsmål:**
+
+```python
+accuracy, precision, recall, f1, roc_auc, confusion_matrix
+```
+
+*   Giver overblik over retningstræffere vs. fejl.
+
+**Trading‑proxy (meget simpel):**
+
+```python
+test["pred"]  = y_pred
+test["proba"] = proba
+long_mask     = test["pred"] == 1
+hit_rate      = (test.loc[long_mask, "y"] == 1).mean()
+mean_fut_ret  = test.loc[long_mask, "fut_ret"].mean()
+sum_fut_ret   = test.loc[long_mask, "fut_ret"].sum()
+```
+
+**Hvorfor:**
+
+*   Klassifikationsmål kan se “pæne” ud i 50/50‑serier; vi vil også se, om signalerne **har positivt realiseret afkast** (selvom dette **ignorerer fees/spread/latency**).
+
+**Alternativer (mere realistisk):**
+
+*   Træk **spread + kommission** fra *fut\_ret*.
+*   **Position sizing** efter `proba` eller forventet værdi.
+*   **Short‑side** (handel både op/ned med to tærskler).
+*   **Sharpe/Sortino**, max drawdown, turnover, holding time, per‑symbol PnL.
+*   Brug en rigtig **backtester** (vectorbt, backtrader) for at modellere fills, slippage, markedsordrer/limit osv.
+
+***
+
+## 10) Artefakter og reproducérbarhed
+
+```python
+# Gemmer
+metrics.txt
+test_predictions.csv
+model.joblib
+```
+
+*   **`metrics.txt`**: resultater, hitrate, simple PnL‑proxy, hyperparametre.
+*   **`test_predictions.csv`**: rad for rad (kan bruges til dybere analyse, pr. symbol/tidspunkt).
+*   **`model.joblib`**: gemt model til senere **inferens**/live‑kørsel.
+
+**Alternativer:**
+
+*   Brug **MLflow/W\&B** til eksperiment‑tracking.
+*   Gem også **feature importance** (permutation) og **per‑symbol** statistik.
+
+***
+
+## 11) Datakvalitet & lækage‑vagter
+
+*   **Per‑symbol groupby** sikrer, at lags/labels ikke blandes på tværs af aktier (**ingen cross‑asset lækage**).
+*   **Lag ≥ 1** og **shift(-1)** for target eliminerer look‑ahead.
+*   **Sortering** før feature‑build.
+*   **UTC** tidszone sikrer konsistente skift.
+
+**Edge cases:**
+
+*   Tomme symboler i 7‑dages 1m‑vinduet → filtreres væk i downloaderen.
+*   Uens handelskalendere → RTH‑filter pr. symbol hjælper.
+*   **Klassebalance** \~50/50: fokusér på **hitrate på signaler** og **mean fut\_ret** mere end ren accuracy.
+
+***
+
+## 12) Hvad ville jeg udvide med (når du er klar)
+
+1.  **Walk‑forward CV** (rolling vinduer) med **purge/embargo**  
+    → Robusthed på tværs af perioder og mindsker overoptimisme.
+
+2.  **Tærskel‑styring**
+    *   Flag `--proba_thresh 0.55`
+    *   ELLER forventet værdi efter **spread/fees**.
+
+3.  **Transaktionsomkostninger**
+    *   Spread pr. symbol (estimér fx median(H-L)/2 på 1m?)
+    *   Fast fee eller bps.
+
+4.  **Short‑side** og positionsstørrelse
+    *   `pos = +1` hvis proba > Thigh; `pos = -1` hvis proba < Tlow; 0 ellers.
+    *   Størrelse proportional med *kalibreret* proba.
+
+5.  **Sekvensmodeller**
+    *   Lav feature‑tensor (N, L, K) og træn en 1D‑CNN/LSTM/GRU — særligt relevant når du **eksplicit** vil bruge “3–6 lys” som sekvens.
+
+6.  **Feature bank** (fortsat “simpel”)
+    *   Candle body/wicks, close‑vs‑open, rolling medians, VWAP‑distance, bidrag fra markedsleder (SPY/QQQ) som regressorer.
+
+***
+
+## Opsummering (kort)
+
+*   Scriptet indlæser dine 1m‑lys, **filtrerer RTH (valgfrit)**, bygger **laggede features** for de sidste **L** lys (retur, range, volumen, volumen‑z), **labeler næste minut**, laver et **tidsbaseret hold‑out**, træner en **boosting‑model**, evaluerer både **ML‑mål** og en **simpel PnL‑proxy**, og gemmer **artefakter** til videre analyse.
+*   Alle features er **strengt fortidsbaserede** → ingen look‑ahead.
+*   Valgene er lavet for at være **enkle, robuste** og matche din præcise problemformulering (3–6 lys + volumen).
+
+***
+
+## Hvad vil du have som næste skridt?
+
+Vil du have, at jeg:
+
+*   tilføjer **walk‑forward CV + purge/embargo**,
+*   indfører en **beslutningstærskel** (fx `--proba_thresh 0.55`) og **netto‑PnL** efter spreads/fees,
+*   eller viser en **sekvens‑variant** (LSTM/1D‑CNN) der direkte indlæser de seneste *L* lys som en sekvens?
+
+Sig gerne: **hvilket lag‑antal** (3, 4, 5 eller 6) vil du låse som baseline, og om vi skal holde **RTH=true**. Så bygger jeg næste version.
