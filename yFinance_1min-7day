@@ -1,0 +1,24 @@
+import yfinance as yf
+from datetime import datetime, timedelta
+
+# Vælg dit symbol — f.eks. Apple aktien
+symbol = "AAPL"
+
+# Beregn start- og sluttid for de sidste 7 dage
+end_time = datetime.now()
+start_time = end_time - timedelta(days=7)
+
+# Hent 1-minutters data
+df = yf.download(
+    tickers=symbol,
+    interval="1m",
+    start=start_time,
+    end=end_time,
+    progress=False
+)
+
+print(df.head())
+print("Antal rækker:", len(df))
+
+# Gem til CSV hvis ønsket
+df.to_csv(f"{symbol}_1min_last7days.csv")
